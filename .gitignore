@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.venv
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# FastAPI
+backend/app.db
+alembic.ini.bak
+
+# Flutter / Dart
+frontend/.dart_tool/
+frontend/.packages
+frontend/build/
+frontend/.pub/
+frontend/.pub-cache/
+frontend/pubspec.lock
+frontend/coverage/
+frontend/lib/generated_plugin_registrant.dart
+frontend/**/*.g.dart
+frontend/**/*.freezed.dart
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/
+backend/logs/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
+
+# Temporary Files / Database
+*.sqlite
+*.sqlite3
+*.db
+backend/pgdata/
+tmp/
+temp/
