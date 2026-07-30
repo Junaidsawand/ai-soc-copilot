@@ -1,102 +1,177 @@
 # Production Deployment Guide: AI SOC Copilot
 
 ## 1. Executive Summary
-This document specifies the deployment architecture and operational runbooks for the AI SOC Copilot MVP. The deployment strategy favors a **Containerized Modular Monolith**, optimized for low operational overhead via modern Platform-as-a-Service (PaaS) providers, while maintaining stringent enterprise security postures.
+This document specifies the deployment architecture, configuration parameters, and operational runbooks for the AI SOC Copilot platform. As a cybersecurity product, the deployment strategy prioritizes an immutable, containerized infrastructure (Docker) optimized for rapid scaling and low operational overhead via modern Platform-as-a-Service (PaaS) providers.
 
 ---
 
-## 2. Infrastructure & Hosting
+## 2. Infrastructure Architecture
 
-### 2.1 Target Hosting Environment
-The MVP explicitly targets managed PaaS providers (e.g., Render, Railway, or AWS App Runner) to minimize DevOps overhead for the solo-founder/lean team constraint.
+The system utilizes a **Modular Monolith** pattern delivered via OCI-compliant containers, ensuring absolute environmental parity between Development, Staging, and Production.
 
-- **Frontend:** Flutter Web compiled to static assets (`HTML/JS/CSS`), distributed via a global CDN.
-- **Backend:** FastAPI Python application running via ASGI server (`Uvicorn` with `Gunicorn` workers).
-- **Database:** Managed PostgreSQL (16+) instance.
+### 2.1 Deployment Topology (Production)
 
-### 2.2 Containerization (Docker)
-The backend is packaged as an OCI-compliant Docker container, ensuring absolute environmental parity between Development, Staging, and Production.
-
-- **Base Image:** `python:3.11-slim` (Minimizes attack surface).
-- **Non-Root Execution:** The Dockerfile explicitly creates a non-root `appuser` to run the FastAPI process, adhering to the principle of least privilege.
-- **Immutability:** Docker images are tagged with the specific Git commit SHA. `latest` tags are avoided in production deployment manifests.
-
----
-
-## 3. Environment & Secrets Management
-
-Security is paramount. No secrets are ever committed to version control.
-
-### 3.1 Environment Variables
-Application configuration is injected dynamically at runtime via OS-level environment variables (Twelve-Factor App methodology). 
-- `DATABASE_URL`: Standard PostgreSQL connection string.
-- `OPENAI_API_KEY`: API token for LLM inference.
-- `ENVIRONMENT`: Defines the runtime context (`development`, `staging`, `production`).
-- `LOG_LEVEL`: Configures logging verbosity (`INFO` or `DEBUG`).
-
-### 3.2 Secrets Management
-In production, environment variables are managed by the PaaS provider's integrated Secrets Manager (e.g., AWS Parameter Store, Render Secret Files). These vaults encrypt variables at rest and only decrypt them into the container's ephemeral memory upon startup.
-
----
-
-## 4. Network Security & HTTPS
-
-### 4.1 Transport Layer Security (TLS/SSL)
-- **HTTPS Enforcement:** All HTTP traffic is forcefully redirected to HTTPS (Port 443).
-- **Termination:** TLS termination occurs at the PaaS Load Balancer/CDN layer. Internal container traffic operates over private virtual networks.
-
-### 4.2 Cross-Origin Resource Sharing (CORS)
-To prevent Cross-Site Request Forgery (CSRF) and unauthorized API usage, the backend CORS middleware is strictly whitelisted to the production frontend domain (e.g., `https://aisoccopilot.com`). Wildcards (`*`) are explicitly prohibited in the production environment.
+```mermaid
+graph TD
+    Client[End User/Browser] --> |HTTPS / TLS 1.3| CDN[Global CDN / PaaS Load Balancer]
+    
+    subgraph "Managed PaaS Environment (VPC)"
+        CDN --> |Port 80| Frontend[Flutter Web Container\nStatic Assets]
+        CDN --> |Port 443 -> 8000| Backend[FastAPI Backend Container\nUvicorn + Gunicorn Workers]
+        
+        Backend --> |Connection Pool| DB[(Managed PostgreSQL 16+)]
+        Backend -.-> |Secret Injection| Vault[PaaS Secrets Manager]
+    end
+    
+    subgraph "External Integrations"
+        Backend --> |REST API / HTTPS| OpenAI[OpenAI API]
+    end
+    
+    classDef container fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;
+    classDef database fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef external fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    
+    class Frontend,Backend container;
+    class DB database;
+    class OpenAI external;
+```
 
 ---
 
-## 5. CI/CD Pipeline
+## 3. Environment Configuration
 
-Continuous Integration and Continuous Deployment (CI/CD) is fully automated using GitHub Actions.
+Application behavior is dynamically controlled via OS-level environment variables (adhering to the Twelve-Factor App methodology). Secrets must **never** be committed to version control.
 
-### 5.1 CI Pipeline (On Pull Request)
-1. Code formatting and linting verification (`Black`, `Ruff`).
-2. SAST Scanning (`Bandit`) to detect hardcoded secrets.
-3. Automated unit and integration test execution.
-4. Ephemeral PostgreSQL database spun up to verify Alembic migrations apply cleanly.
+### 3.1 Backend Configuration Matrix
 
-### 5.2 CD Pipeline (On Merge to `main`)
-1. Executes final regression test suite.
-2. Builds the Docker Image and tags it with the Git Commit SHA.
-3. Pushes the image to a private Container Registry.
-4. Triggers an automated rolling deployment on the Staging environment.
-5. Awaits manual approval (via GitHub Environments) to promote the image to Production.
+| Variable | Description | Requirement | Example/Default |
+| :--- | :--- | :---: | :--- |
+| `ENVIRONMENT` | Defines the runtime context (`development`, `staging`, `production`). | **Required** | `production` |
+| `DATABASE_URL` | PostgreSQL connection string. | **Required** | `postgresql://user:pass@host:5432/db` |
+| `OPENAI_API_KEY` | Token for LLM inference. | **Required** | `sk-proj-...` |
+| `LOG_LEVEL` | Application logging verbosity. | Optional | `INFO` |
+| `CORS_ORIGINS` | Comma-separated list of permitted frontend origins. | Optional | `https://aisoccopilot.com` |
+| `MAX_UPLOAD_SIZE_MB` | Maximum allowed JSON upload size. | Optional | `10` |
 
 ---
 
-## 6. Monitoring & Logging
+## 4. Local Development Environment
 
-### 6.1 Observability
-- **Health Probes:** The PaaS load balancer continuously polls the `GET /api/v1/health` endpoint. If the backend fails to respond 3 consecutive times, the container is automatically restarted.
-- **Application Logging:** Standardized JSON formatting is utilized for standard output (`stdout`). Logs include a unique `trace_id` to track investigations across the asynchronous LLM workflow.
-- **Error Tracking:** (Future) Integration with Sentry for real-time alerting on backend exceptions and UI crashes.
+The local environment is orchestrated via Docker Compose to ensure rapid bootstrapping for new developers.
+
+### 4.1 Prerequisites
+- Docker Engine & Docker Compose (v2+)
+- Git
+
+### 4.2 Local Bootstrapping Sequence
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/Junaidsawand/ai-soc-copilot.git
+   cd ai-soc-copilot
+   ```
+2. **Provision Environment Variables:**
+   ```bash
+   cp backend/.env.example backend/.env
+   # Insert your OPENAI_API_KEY into backend/.env
+   ```
+3. **Start the Infrastructure:**
+   ```bash
+   docker-compose up -d --build
+   ```
+4. **Execute Database Migrations:**
+   ```bash
+   docker-compose exec backend alembic upgrade head
+   ```
+
+### 4.3 Teardown Sequence
+To cleanly shut down the local environment and preserve database volumes:
+```bash
+docker-compose stop
+```
+To destroy the environment and wipe the database:
+```bash
+docker-compose down -v
+```
 
 ---
 
-## 7. Disaster Recovery & Backups
+## 5. Production Deployment Strategy
 
-### 7.1 Backup Strategy
-- **Automated Snapshots:** The managed PostgreSQL database performs daily automated point-in-time snapshots.
-- **Retention:** Snapshots are retained for a minimum of 7 days (configurable based on compliance needs).
-- **Immutable Storage:** (Future) Archiving of `uploaded_alerts` to WORM-compliant AWS S3 buckets for forensic retention.
+The MVP explicitly targets managed PaaS providers (e.g., Render, Railway, or AWS App Runner) to minimize DevOps overhead.
 
-### 7.2 Disaster Recovery (RTO/RPO)
-Because the application state is entirely contained within the managed database, and infrastructure is defined as code (or managed by PaaS):
-- **Recovery Time Objective (RTO):** < 2 Hours (Time required to deploy containers to a new region and restore the DB snapshot).
-- **Recovery Point Objective (RPO):** < 24 Hours (Based on the daily snapshot frequency).
+### 5.1 CI/CD Pipeline (GitHub Actions)
+
+```mermaid
+sequenceDiagram
+    participant Developer
+    participant GitHub as GitHub Actions
+    participant SAST as Security Scanners
+    participant Test as Pytest / DB
+    participant Registry as Container Registry
+    participant PaaS as Production PaaS
+
+    Developer->>GitHub: Push to `main` branch
+    GitHub->>SAST: Run Bandit (Secrets Check)
+    SAST-->>GitHub: Pass
+    GitHub->>Test: Run Unit/Integration Tests
+    Test-->>GitHub: Pass (100% Coverage)
+    GitHub->>Registry: Build & Push Docker Image (Tag: Git SHA)
+    Registry-->>GitHub: Image Stored
+    GitHub->>PaaS: Trigger Webhook for Rolling Deployment
+    PaaS->>PaaS: Pull Image & Start Container
+    PaaS-->>Developer: Deployment Successful
+```
+
+### 5.2 Reverse Proxy & Networking
+- **TLS Termination:** All TLS/SSL termination occurs at the PaaS Load Balancer layer. Internal traffic between the PaaS routing mesh and the backend container operates over private interfaces on HTTP.
+- **HTTPS Enforcement:** The PaaS router must be configured to forcefully redirect all `HTTP 80` traffic to `HTTPS 443`.
 
 ---
 
-## 8. Rollback Procedures
+## 6. Operations & Site Reliability (SRE)
 
-If a newly deployed version introduces critical failures (e.g., 500 errors spike, database migrations fail), the following runbook is executed:
+### 6.1 Health Checks
+The backend container exposes a lightweight health endpoint. The PaaS Load Balancer must be configured to poll this endpoint every 30 seconds.
+- **Endpoint:** `GET /api/v1/health`
+- **Expected Response:** `200 OK {"status": "healthy"}`
+- **Action:** If the container fails 3 consecutive health checks, the orchestrator will automatically SIGTERM the container and spin up a replacement.
 
-1. **Halt Deployment:** Freeze the CI/CD pipeline to prevent further changes.
-2. **Revert Image:** In the PaaS dashboard (or via CLI), instruct the orchestrator to deploy the previous, known-good Docker image tag.
-3. **Database Considerations:** If the deployment included a breaking schema migration, the DBA must manually run `alembic downgrade -1` before the old image is spun up. *(Note: Migrations should ideally be written as backward-compatible to avoid this scenario).*
-4. **Post-Mortem:** Once stability is restored, perform root cause analysis before unfreezing the pipeline.
+### 6.2 Application Logging
+- The application outputs structured JSON logs to `stdout` and `stderr`.
+- Logs include a `trace_id` to correlate asynchronous background AI tasks with the originating web request.
+- Logs **never** contain Raw API Keys, Database Credentials, or PII.
+
+### 6.3 Backup Strategy (RPO)
+- **Database:** The managed PostgreSQL database performs daily automated point-in-time snapshots.
+- **Retention:** Snapshots are retained for 7 days.
+- **Recovery Point Objective (RPO):** < 24 Hours.
+
+---
+
+## 7. Disaster Recovery & Rollback
+
+### 7.1 Rollback Procedure
+If a deployment introduces critical failures (e.g., 500 error spikes):
+1. **Halt CI/CD:** Pause GitHub Actions to prevent further merges.
+2. **Revert Image Tag:** In the PaaS console, manually trigger a deployment using the previous known-good Git SHA Docker image.
+3. **Database Downgrade:** If the bad deployment included a breaking schema migration, the DBA must manually execute:
+   ```bash
+   alembic downgrade -1
+   ```
+   *(Note: Migrations should be authored as backward-compatible to avoid requiring this step).*
+
+### 7.2 Disaster Recovery (RTO)
+Because all application state resides in the managed database, a total cluster failure requires:
+1. Provisioning a new PaaS cluster.
+2. Restoring the DB from the latest snapshot.
+3. Triggering the CI/CD pipeline to deploy the containers to the new cluster.
+- **Recovery Time Objective (RTO):** < 2 Hours.
+
+---
+
+## 8. Security Hardening
+
+- **Non-Root Execution:** The `Dockerfile` explicitly creates a non-root `appuser`. The application will crash if execution is attempted as `root`.
+- **CORS Lock Down:** In production, `CORS_ORIGINS` is strictly validated. Wildcards are forbidden.
+- **Immutable Tags:** Docker images are tagged with the specific Git commit SHA. The `latest` tag is prohibited in production manifests to ensure deterministic rollbacks.
+- **Secrets Management:** Secrets are injected at runtime via the PaaS secure vault. No `.env` files are copied into production containers.
